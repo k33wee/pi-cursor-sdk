@@ -11,7 +11,11 @@ import {
 import { streamCursor, __testUtils } from "../src/cursor-provider.js";
 import { buildCursorPrompt, computeCursorContextFingerprint, shouldBootstrapCursorContext } from "../src/context.js";
 import { getActiveContextToolNames } from "../src/cursor-context-tools.js";
-import { resolveCursorPiContext } from "../src/cursor-pi-context.js";
+import {
+	CURSOR_PI_SUMMARIZATION_SYSTEM_PROMPT_MARKER,
+	isCursorSummarizationContext,
+	resolveCursorPiContext,
+} from "../src/cursor-pi-context.js";
 import { getPackageDir, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import { pathToFileURL } from "node:url";
 import { resolveCursorFacingSystemPrompt } from "../src/cursor-agents-context.js";
@@ -122,6 +126,34 @@ describe("installed Pi provider context boundary", () => {
 	it("preserves the legacy absent-tool snapshot distinction", () => {
 		expect(resolveCursorPiContext({ systemPrompt: "legacy", messages: [user] }).tools).toBeUndefined();
 		expect(resolveCursorPiContext({ systemPrompt: "legacy", messages: [user], tools: [] }).tools).toEqual([]);
+	});
+
+	it("detects Pi summarization context from the installed system prompt marker", async () => {
+		const { SUMMARIZATION_SYSTEM_PROMPT } = await import(
+			pathToFileURL(`${getPackageDir()}/dist/core/compaction/utils.js`).href
+		) as { SUMMARIZATION_SYSTEM_PROMPT: string };
+		expect(SUMMARIZATION_SYSTEM_PROMPT).toContain(CURSOR_PI_SUMMARIZATION_SYSTEM_PROMPT_MARKER);
+		expect(isCursorSummarizationContext({ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: [user] })).toBe(true);
+		expect(isCursorSummarizationContext({ systemPrompt: "SYSTEM_SENTINEL", tools: [], messages: [user] })).toBe(false);
+	});
+
+	it("creates a text-only Cursor agent for Pi summarization without host tools or the pi bridge", async () => {
+		const sdkSend = mockSend();
+		registerBridgeForProviderTest({ active: [tool.name], tools: [createTestToolInfo(tool.name, tool.parameters)] });
+		const { send } = await boundary();
+		const { SUMMARIZATION_SYSTEM_PROMPT } = await import(
+			pathToFileURL(`${getPackageDir()}/dist/core/compaction/utils.js`).href
+		) as { SUMMARIZATION_SYSTEM_PROMPT: string };
+		expect((await send({ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: [user] })).stopReason).toBe("stop");
+		const options = getCreatedAgentOptions();
+		expect(options.tools).toEqual([]);
+		expect(options.mcpServers).toBeUndefined();
+		const text = sdkSend.mock.calls[0][0].text;
+		expect(text).toContain(CURSOR_PI_SUMMARIZATION_SYSTEM_PROMPT_MARKER);
+		expect(text).toContain("Reply with only the requested text. Do not call tools.");
+		expect(text).not.toContain("Cursor SDK tool boundary:");
+		expect(text).not.toContain("Tools: call available Cursor SDK/MCP tools");
+		expect(text).not.toContain("For exposed pi bridge tools");
 	});
 
 	it.each(["fresh", "bootstrap"] as const)("preserves cloud instructions with %s history policy", async (policy) => {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentModeOption, LocalAgentOptions, LocalAgentStore, ModelSelection, SDKAgent, SettingSource } from "@cursor/sdk";
+import type { AgentModeOption, LocalAgentOptions, LocalAgentStore, ModelSelection, SDKAgent, SettingSource, ToolName } from "@cursor/sdk";
 import type { Context } from "@earendil-works/pi-ai";
 import {
 	getRegisteredCursorPiToolBridge,
@@ -132,6 +132,8 @@ interface SessionCursorAgentCreateParams {
 	debugRecorder?: CursorSdkEventDebugRecorder;
 	localResume?: boolean;
 	forceCreate?: boolean;
+	/** Local text-only run: no built-in Cursor tools, no pi bridge MCP. */
+	textOnly?: boolean;
 	createAgent?: CursorSdkModule["Agent"]["create"];
 	resumeAgent?: CursorSdkModule["Agent"]["resume"];
 }
@@ -224,6 +226,7 @@ function buildSessionAgentPoolKey(scopeKey: string, params: SessionCursorAgentCr
 				? "http1:on"
 				: "http1:off",
 		buildApiKeyPoolKeyFingerprint(params.apiKey),
+		params.textOnly === true ? "tools:none" : "tools:default",
 		buildBridgePoolKeySuffix(),
 	].join("\0");
 }
@@ -382,7 +385,7 @@ function leaseFromEntry(
 	params: SessionCursorAgentCreateParams,
 	created: boolean,
 ): SessionCursorAgentLease {
-	entry.resumeEnabled = params.localResume === true;
+	entry.resumeEnabled = params.localResume === true && params.textOnly !== true;
 	bindBridgeToolRequest(entry, params.onBridgeToolRequest);
 	entry.bridgeRun?.setDebugRecorder(params.debugRecorder);
 	const resumeNotice = entry.resumeNotice;
@@ -445,7 +448,7 @@ async function createSessionAgentEntry(
 	let bridgeRun: CursorPiToolBridgeRun | undefined;
 	let sessionStore: OpenCursorSessionStore | undefined;
 	try {
-		const registeredBridge = getRegisteredCursorPiToolBridge();
+		const registeredBridge = params.textOnly === true ? undefined : getRegisteredCursorPiToolBridge();
 		if (registeredBridge) {
 			bridgeRun = await registeredBridge.createRun({
 				onToolRequest: params.onBridgeToolRequest,
@@ -458,7 +461,7 @@ async function createSessionAgentEntry(
 		}
 
 		const resolvedPoolKey = buildSessionAgentPoolKey(scopeKey, params);
-		const resumeEligible = params.localResume === true && !params.forceCreate;
+		const resumeEligible = params.localResume === true && !params.forceCreate && params.textOnly !== true;
 		let createAgent = params.createAgent;
 		let resumeAgent = params.resumeAgent;
 		if (!createAgent || (resumeEligible && !resumeAgent)) {
@@ -488,7 +491,8 @@ async function createSessionAgentEntry(
 				localSafety: params.localSafety,
 				store: sessionStore!.store,
 			}),
-			...(bridgeRun?.mcpServers ? { mcpServers: bridgeRun.mcpServers } : {}),
+			...(params.textOnly === true ? { tools: [] as ToolName[] } : {}),
+			...(params.textOnly === true ? {} : (bridgeRun?.mcpServers ? { mcpServers: bridgeRun.mcpServers } : {})),
 		});
 		let agent: SDKAgent | undefined;
 		let effectiveSendState = sendState;

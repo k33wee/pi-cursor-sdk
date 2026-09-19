@@ -1,5 +1,5 @@
 import type { Context, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import { getCursorConversationMessages, resolveCursorPiContext } from "./cursor-pi-context.js";
+import { getCursorConversationMessages, isCursorSummarizationContext, resolveCursorPiContext } from "./cursor-pi-context.js";
 import type { AgentModeOption, ModelSelection, SDKAgent } from "@cursor/sdk";
 import { configureCursorSdkHttp1 } from "./cursor-http1.js";
 import { installCursorMcpToolTimeoutOverride } from "./cursor-mcp-timeout-override.js";
@@ -270,6 +270,7 @@ async function prepareCursorLocalProviderTurn(
 		const settingSources = getEffectiveCursorSettingSources();
 		const queuedBridgeRequestsBeforeLiveRun: CursorPiBridgeToolRequest[] = [];
 		let liveRunForBridgeQueue: CursorLiveRun | undefined;
+		const textOnly = isCursorSummarizationContext(context);
 
 		const sessionAgentAcquireParams = {
 			apiKey: resolvedApiKey,
@@ -278,7 +279,8 @@ async function prepareCursorLocalProviderTurn(
 			modelSelection: selection,
 			settingSources,
 			localSafety,
-			localResume: resolvedConfig.local.resume.value,
+			localResume: textOnly ? false : resolvedConfig.local.resume.value,
+			textOnly,
 			useHttp1ForAgent,
 			debugRecorder: sdkEventDebug,
 			onBridgeToolRequest: (request: CursorPiBridgeToolRequest) => {
@@ -296,15 +298,16 @@ async function prepareCursorLocalProviderTurn(
 		throwIfAborted();
 
 		let bridgeToolNames = new Set(sessionAgentLease.bridgeRun?.snapshot.tools.map((tool) => tool.mcpToolName) ?? []);
-		let includePiBridgeGuidance = bridgeToolNames.size > 0;
+		let includePiBridgeGuidance = !textOnly && bridgeToolNames.size > 0;
 		const buildPromptOptions = (plan: ReturnType<typeof planCursorSessionSend>) => {
 			const promptOptions = {
 				...getCursorPromptOptions(model),
 				agentMode,
 				includePiBridgeGuidance,
-				includePiAskQuestionGuidance: bridgeToolNames.has("pi__cursor_ask_question"),
+				includePiAskQuestionGuidance: !textOnly && bridgeToolNames.has("pi__cursor_ask_question"),
+				includeToolGuidance: !textOnly,
 			};
-			if (plan.mode !== "bootstrap" || !resolveCursorToolManifestEnabled()) {
+			if (textOnly || plan.mode !== "bootstrap" || !resolveCursorToolManifestEnabled()) {
 				return promptOptions;
 			}
 			return {
@@ -327,7 +330,7 @@ async function prepareCursorLocalProviderTurn(
 			sessionAgentLease = await acquireSessionCursorAgent({ ...sessionAgentAcquireParams, forceCreate: true });
 			sessionAgentScopeKey = sessionAgentLease.scopeKey;
 			bridgeToolNames = new Set(sessionAgentLease.bridgeRun?.snapshot.tools.map((tool) => tool.mcpToolName) ?? []);
-			includePiBridgeGuidance = bridgeToolNames.size > 0;
+			includePiBridgeGuidance = !textOnly && bridgeToolNames.size > 0;
 			sendPlan = planCursorSessionSend(sessionAgentLease.sendState, context);
 			promptOptions = buildPromptOptions(sendPlan);
 			prompt = buildCursorSessionSendPrompt(context, promptOptions, sendPlan);
@@ -341,7 +344,7 @@ async function prepareCursorLocalProviderTurn(
 		};
 		const sessionBridgeRun = bridgeRun;
 		const promptInputTokens = estimateCursorPromptTokens(prompt, promptOptions);
-		const useNativeToolReplay = isCursorNativeToolDisplayRuntimeEnabled();
+		const useNativeToolReplay = !textOnly && isCursorNativeToolDisplayRuntimeEnabled();
 		const activeToolNames = getActiveContextToolNames(context);
 		sdkEventDebug?.recordProviderMeta({
 			model: {

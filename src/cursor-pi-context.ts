@@ -25,6 +25,20 @@ export function getCursorConversationMessages(context: Pick<Context, "messages">
 	return context.messages.filter((message) => !isCursorSystemMessage(message));
 }
 
+/** Distinctive prefix of Pi's built-in summarization system prompt. */
+export const CURSOR_PI_SUMMARIZATION_SYSTEM_PROMPT_MARKER = "You are a context summarization assistant";
+
+export function isCursorSummarizationContext(context: Context): boolean {
+	const direct = typeof context.systemPrompt === "string" ? context.systemPrompt : "";
+	let resolved = "";
+	try {
+		resolved = resolveCursorPiContext(context).systemPrompt;
+	} catch {
+		resolved = "";
+	}
+	return [direct, resolved].some((prompt) => prompt.includes(CURSOR_PI_SUMMARIZATION_SYSTEM_PROMPT_MARKER));
+}
+
 export function resolveCursorPiContext(context: Context): { systemPrompt: string; tools: Tool[] | undefined } {
 	if (!transcriptHelpers) {
 		if (context.messages.some(isCursorSystemMessage)) {

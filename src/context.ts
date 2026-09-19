@@ -20,6 +20,8 @@ export interface CursorPromptOptions {
 	toolManifest?: string;
 	includePiBridgeGuidance?: boolean;
 	includePiAskQuestionGuidance?: boolean;
+	/** When false, omit tool-boundary/manifest/tail guidance (Pi summarization). */
+	includeToolGuidance?: boolean;
 }
 
 export const CURSOR_APPROX_CHARS_PER_TOKEN = 4;
@@ -416,7 +418,9 @@ export function buildCursorIncrementalPrompt(context: Context, options: CursorPr
 	const parts = applyPromptBudget(
 		sectionsBeforeMessages,
 		latestUserMessageSections,
-		[getCursorToolTailGuardText(options)],
+		[options.includeToolGuidance === false
+			? "Reply with only the requested text. Do not call tools."
+			: getCursorToolTailGuardText(options)],
 		latestUserMessageIndex,
 		budgetOptions,
 	);
@@ -424,14 +428,17 @@ export function buildCursorIncrementalPrompt(context: Context, options: CursorPr
 }
 
 export function buildCursorPrompt(context: Context, options: CursorPromptOptions = {}): CursorPrompt {
-	const sectionsBeforeMessages: string[] = [getCursorToolBoundaryText({
-		agentMode: options.agentMode,
-		hasToolManifest: Boolean(options.toolManifest),
-		includePiBridgeGuidance: options.includePiBridgeGuidance,
-		includePiAskQuestionGuidance: options.includePiAskQuestionGuidance,
-	})];
-	if (options.toolManifest) {
-		sectionsBeforeMessages.push(options.toolManifest);
+	const sectionsBeforeMessages: string[] = [];
+	if (options.includeToolGuidance !== false) {
+		sectionsBeforeMessages.push(getCursorToolBoundaryText({
+			agentMode: options.agentMode,
+			hasToolManifest: Boolean(options.toolManifest),
+			includePiBridgeGuidance: options.includePiBridgeGuidance,
+			includePiAskQuestionGuidance: options.includePiAskQuestionGuidance,
+		}));
+		if (options.toolManifest) {
+			sectionsBeforeMessages.push(options.toolManifest);
+		}
 	}
 
 	const { systemPrompt } = resolveCursorPiContext(context);
@@ -446,7 +453,9 @@ export function buildCursorPrompt(context: Context, options: CursorPromptOptions
 			return text ? { index, text } : undefined;
 		})
 		.filter((section): section is { index: number; text: string } => section !== undefined);
-	const sectionsAfterMessages = getCursorBootstrapTailSections(options);
+	const sectionsAfterMessages = options.includeToolGuidance === false
+		? ["Reply with only the requested text. Do not call tools."]
+		: getCursorBootstrapTailSections(options);
 	const images = extractLatestImages(messages);
 	const imageTokenReserve = images.length * (options.imageTokenEstimate ?? 0);
 	const budgetOptions =

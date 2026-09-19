@@ -94,6 +94,69 @@ describe("cursor-session-agent", () => {
 		expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ mode: "plan" }));
 	});
 
+	it("passes tools: [] and skips resume for text-only summarization agents", async () => {
+		const createAgent = vi.fn().mockResolvedValue({
+			agentId: "agent-text-only",
+			[Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
+		});
+		const resumeAgent = vi.fn();
+		cursorSessionScopeTestUtils.set("/tmp/project", "/tmp/sessions/test.jsonl");
+
+		await acquireSessionCursorAgent({
+			apiKey: "test-key",
+			agentMode: "agent",
+			cwd: "/tmp/project",
+			modelSelection: { id: "composer-2.5" },
+			localResume: true,
+			textOnly: true,
+			createAgent,
+			resumeAgent,
+		});
+
+		expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ tools: [] }));
+		expect(createAgent.mock.calls[0][0].mcpServers).toBeUndefined();
+		expect(resumeAgent).not.toHaveBeenCalled();
+	});
+
+	it("does not reuse a tool-enabled agent for a text-only acquire", async () => {
+		const mockDispose = vi.fn().mockResolvedValue(undefined);
+		const createAgent = vi.fn().mockImplementation(async () => ({
+			agentId: `agent-${createAgent.mock.calls.length + 1}`,
+			[Symbol.asyncDispose]: mockDispose,
+		}));
+		cursorSessionScopeTestUtils.set("/tmp/project", "/tmp/sessions/test.jsonl");
+		const params = {
+			apiKey: "test-key",
+			agentMode: "agent" as const,
+			cwd: "/tmp/project",
+			modelSelection: { id: "composer-2.5" },
+			createAgent,
+		};
+
+		const first = await acquireSessionCursorAgent(params);
+		const second = await acquireSessionCursorAgent({ ...params, textOnly: true });
+
+		expect(second.created).toBe(true);
+		expect(second.agent).not.toBe(first.agent);
+		expect(createAgent).toHaveBeenCalledTimes(2);
+		expect(createAgent.mock.calls[1][0].tools).toEqual([]);
+		expect(mockDispose).toHaveBeenCalledTimes(1);
+	});
+
+	it("splits default and text-only session agent pool keys", () => {
+		const baseParams = {
+			apiKey: "test-key",
+			agentMode: "agent" as const,
+			cwd: "/tmp/project",
+			modelSelection: { id: "composer-2.5" },
+		};
+		expect(
+			sessionAgentTestUtils.buildSessionAgentPoolKey("scope", baseParams),
+		).not.toBe(
+			sessionAgentTestUtils.buildSessionAgentPoolKey("scope", { ...baseParams, textOnly: true }),
+		);
+	});
+
 	it("keeps Cursor SDK mode out of the session agent pool key", async () => {
 		const mockDispose = vi.fn().mockResolvedValue(undefined);
 		const createAgent = vi.fn().mockResolvedValue({

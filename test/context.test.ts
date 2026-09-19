@@ -513,6 +513,22 @@ describe("buildCursorPrompt", () => {
 		expect(result.text).not.toContain("Callable tool surfaces this run:");
 	});
 
+	it("omits tool guidance for text-only summarization prompts", () => {
+		const result = buildCursorPrompt(
+			{
+				systemPrompt: "You are a context summarization assistant.",
+				messages: [{ role: "user", content: "<conversation>hi</conversation>", timestamp: 1 }],
+			},
+			{ includeToolGuidance: false, toolManifest: "Callable tool surfaces this run:\n- sample" },
+		);
+		expect(result.text).toContain("You are a context summarization assistant.");
+		expect(result.text).toContain("<conversation>hi</conversation>");
+		expect(result.text).toContain("Reply with only the requested text. Do not call tools.");
+		expect(result.text).not.toContain("Cursor SDK tool boundary:");
+		expect(result.text).not.toContain("Callable tool surfaces this run:");
+		expect(result.text).not.toContain("Tools: call available Cursor SDK/MCP tools");
+	});
+
 	it("uses compact pi-bridge framing when bridge guidance is disabled", () => {
 		const ctx: Context = {
 			systemPrompt: "Reply with code only.",
